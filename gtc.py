@@ -581,12 +581,10 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--description")
     g.set_defaults(func=cmd_generate)
 
-    # Command line args untuk IP Check (TLS)
     ip_p = sub.add_parser("ip", help="track IP or domain information via TLS")
     ip_p.add_argument("target", nargs="?", default="", help="IP address or domain name")
     ip_p.set_defaults(func=cmd_ip)
 
-    # Command line args untuk Credits
     cr_cmd = sub.add_parser("credits", help="show creator credits")
     cr_cmd.set_defaults(func=cmd_credits)
 
