@@ -559,6 +559,9 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--description")
     g.set_defaults(func=cmd_generate)
 
+    cr_cmd = sub.add_parser("credits", help="show creator credits")
+    cr_cmd.set_defaults(func=cmd_credits)
+
     cr = sub.add_parser("cred", help="manage stored credentials")
     crs = cr.add_subparsers(dest="cred_cmd", required=True)
     crs.add_parser("list").set_defaults(func=cmd_cred)
@@ -669,7 +672,11 @@ def interactive() -> int:
             continue
 
         action = MENU[idx][1]
-        try:
+        try: 
+          if action == "credits":
+            cmd_credits(None)
+            input("Tekan Enter untuk kembali ke menu...")
+            continue
             if action == "profile":
                 phone = ask("Nomor telepon: ")
                 sys.argv = ["gtc", "search", phone, "-t", "profile"]
