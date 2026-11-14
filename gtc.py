@@ -236,7 +236,7 @@ def show_captcha(b64_image: str) -> Path:
     return path
 
 
-# Fungsi Cek IP menggunakan HTTPS (TLS)
+# --- Fitur Track IP via TLS ---
 def check_ip_info(ip: str = "") -> dict:
     url = f"https://ip-api.com/json/{ip}?fields=status,message,query,country,regionName,city,zip,lat,lon,isp,org,as,timezone"
     try:
@@ -526,6 +526,29 @@ def cmd_cred(args) -> int:
     raise GtcError("unknown cred subcommand")
 
 
+def cmd_ip(args) -> int:
+    target = getattr(args, "target", "") or ""
+    data = check_ip_info(target)
+    print("\n================ HASIL CEK IP ================")
+    for k, v in data.items():
+        print(f"  {k:<12}: {v}")
+    print("==============================================\n")
+    return 0
+
+
+def cmd_credits(args) -> int:
+    print("\n========================================")
+    print("          CREDITS PEMBUAT              ")
+    print("========================================")
+    print("  - rendisec")
+    print("  - vynngrup")
+    print("  - putrawibu")
+    print("  - xynnHd")
+    print("  - xynaa")
+    print("========================================\n")
+    return 0
+
+
 #  cli
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="gtc", description="GetContact CLI")
@@ -557,6 +580,15 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--name", help="store under this name (default: phone)")
     g.add_argument("--description")
     g.set_defaults(func=cmd_generate)
+
+    # Command line args untuk IP Check (TLS)
+    ip_p = sub.add_parser("ip", help="track IP or domain information via TLS")
+    ip_p.add_argument("target", nargs="?", default="", help="IP address or domain name")
+    ip_p.set_defaults(func=cmd_ip)
+
+    # Command line args untuk Credits
+    cr_cmd = sub.add_parser("credits", help="show creator credits")
+    cr_cmd.set_defaults(func=cmd_credits)
 
     cr = sub.add_parser("cred", help="manage stored credentials")
     crs = cr.add_subparsers(dest="cred_cmd", required=True)
@@ -599,37 +631,9 @@ def print_startup(args) -> None:
     print(f"{d}  version   {APP_VERSION} | app {BUNDLE_ID}{r}", file=sys.stderr)
     print(f"{d}  config    {CONFIG_DIR}{r}", file=sys.stderr)
     print(f"{d}  account   {getattr(args, 'account', None) or active} ({n} stored){r}", file=sys.stderr)
-    print(f"{d}  command   {args.cmd}{r}\n", file=sys.stderr)
+    print(f"{d}  command   {getattr(args, 'cmd', '-')}{r}\n", file=sys.stderr)
 
 
-class _Tee:
-    def __init__(self, stream, fh):
-        self._s, self._f = stream, fh
-
-    def write(self, s):
-        self._s.write(s)
-        self._f.write(s)
-        return len(s)
-
-    def flush(self):
-        self._s.flush()
-        self._f.flush()
-
-    def __getattr__(self, name):
-        return getattr(self._s, name)
-
-
-def open_result_file(args) -> Path:
-    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    parts = [time.strftime("%Y%m%d-%H%M%S"), args.cmd]
-    for extra in (getattr(args, "phone", None), getattr(args, "action", None)):
-        if extra:
-            parts.append(re.sub(r"[^0-9A-Za-z_.-]", "_", str(extra)))
-    ext = "json" if getattr(args, "json", False) else "txt"
-    return RESULTS_DIR / f"{'-'.join(parts)}.{ext}"
-
-
-# MENU Diperbarui dengan tambahan menu Cek IP (TLS) & Credits Pembuat
 MENU = [
     ("Cari profil nomor        (nama pemilik)", "profile"),
     ("Cari tag nomor (detail)  (nama tersimpan orang lain)", "tags"),
@@ -671,21 +675,11 @@ def interactive() -> int:
 
         action = MENU[idx][1]
         
-        # Menangani menu Credits Pembuat secara khusus
         if action == "credits":
-            print("\n========================================")
-            print("          CREDITS PEMBUAT              ")
-            print("========================================")
-            print("  - rendisec")
-            print("  - vynngrup")
-            print("  - putrawibu")
-            print("  - xynnHd")
-            print("  - xynaa")
-            print("========================================\n")
+            cmd_credits(None)
             input("Tekan Enter untuk kembali ke menu...")
             continue
             
-        # Menangani menu Cek IP Info (TLS)
         if action == "check_ip":
             target_ip = ask("Masukkan IP atau Domain (biarkan kosong untuk IP Anda sendiri): ")
             try:
