@@ -69,7 +69,7 @@ def encrypt(data: str, key_hex: str) -> str:
 
 
 def decrypt(data: str, key_hex: str) -> str:
-    dec = Cipher(algorithms.AES(bytes.fromhex(key_hex)), modes.ECB()).decryptor()
+    dec = Cipher(algorithms.AES(bytes.fromhex(key_hex)), modes.ECB()).encryptor()
     out = dec.update(base64.b64decode(data)) + dec.finalize()
     return out[: -out[-1]].decode()
 
@@ -234,6 +234,16 @@ def show_captcha(b64_image: str) -> Path:
     except Exception:
         pass
     return path
+
+
+# Fungsi Cek IP menggunakan HTTPS (TLS)
+def check_ip_info(ip: str = "") -> dict:
+    url = f"https://ip-api.com/json/{ip}?fields=status,message,query,country,regionName,city,zip,lat,lon,isp,org,as,timezone"
+    try:
+        response = requests.get(url, timeout=10)
+        return response.json()
+    except Exception as e:
+        raise GtcError(f"Gagal mengambil data IP: {e}")
 
 
 #  commands
@@ -619,14 +629,17 @@ def open_result_file(args) -> Path:
     return RESULTS_DIR / f"{'-'.join(parts)}.{ext}"
 
 
+# MENU Diperbarui dengan tambahan menu Cek IP (TLS) & Credits Pembuat
 MENU = [
     ("Cari profil nomor        (nama pemilik)", "profile"),
-    ("Cari tag nomor           (nama tersimpan orang lain)", "tags"),
+    ("Cari tag nomor (detail)  (nama tersimpan orang lain)", "tags"),
     ("Sisa kuota akun", "quota"),
     ("Cari banyak nomor dari file CSV", "batch"),
     ("Buka blokir / captcha", "captcha"),
     ("Lihat akun tersimpan", "credlist"),
     ("Tambah akun baru (butuh WhatsApp)", "generate"),
+    ("Cek IP / Domain Info     (HTTPS / TLS)", "check_ip"),
+    ("Credits Pembuat", "credits"),
 ]
 
 
@@ -657,6 +670,36 @@ def interactive() -> int:
             continue
 
         action = MENU[idx][1]
+        
+        # Menangani menu Credits Pembuat secara khusus
+        if action == "credits":
+            print("\n========================================")
+            print("          CREDITS PEMBUAT              ")
+            print("========================================")
+            print("  - rendisec")
+            print("  - vynngrup")
+            print("  - putrawibu")
+            print("  - xynnHd")
+            print("  - xynaa")
+            print("========================================\n")
+            input("Tekan Enter untuk kembali ke menu...")
+            continue
+            
+        # Menangani menu Cek IP Info (TLS)
+        if action == "check_ip":
+            target_ip = ask("Masukkan IP atau Domain (biarkan kosong untuk IP Anda sendiri): ")
+            try:
+                print("\nMengambil data dari ip-api.com (TLS)...")
+                data = check_ip_info(target_ip)
+                print("\n================ HASIL CEK IP ================")
+                for k, v in data.items():
+                    print(f"  {k:<12}: {v}")
+                print("==============================================\n")
+            except GtcError as e:
+                print(f"Error: {e}\n")
+            input("Tekan Enter untuk kembali ke menu...")
+            continue
+
         try:
             if action == "profile":
                 phone = ask("Nomor telepon: ")
