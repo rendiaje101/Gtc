@@ -69,7 +69,7 @@ def encrypt(data: str, key_hex: str) -> str:
 
 
 def decrypt(data: str, key_hex: str) -> str:
-    dec = Cipher(algorithms.AES(bytes.fromhex(key_hex)), modes.ECB()).encryptor()
+    dec = Cipher(algorithms.AES(bytes.fromhex(key_hex)), modes.ECB()).decryptor()
     out = dec.update(base64.b64decode(data)) + dec.finalize()
     return out[: -out[-1]].decode()
 
@@ -234,16 +234,6 @@ def show_captcha(b64_image: str) -> Path:
     except Exception:
         pass
     return path
-
-
-# --- Fitur Track IP via TLS ---
-def check_ip_info(ip: str = "") -> dict:
-    url = f"https://ip-api.com/json/{ip}?fields=status,message,query,country,regionName,city,zip,lat,lon,isp,org,as,timezone"
-    try:
-        response = requests.get(url, timeout=10)
-        return response.json()
-    except Exception as e:
-        raise GtcError(f"Gagal mengambil data IP: {e}")
 
 
 #  commands
@@ -484,7 +474,18 @@ def cmd_generate(args) -> int:
     print(f"\nVerified {validation_date}. Saved as '{name}' in {CRED_FILE}")
     return 0
 
-
+def cmd_credits(args) -> int:
+    print("\n========================================")
+    print("          CREDITS PEMBUAT              ")
+    print("========================================")
+    print("  - rendisec")
+    print("  - vynngrup")
+    print("  - putrawibu")
+    print("  - xynnHd")
+    print("  - xynaa")
+    print("========================================\n")
+    return 0
+    
 def cmd_cred(args) -> int:
     store = load_store()
     creds = store.setdefault("credentials", {})
@@ -526,29 +527,6 @@ def cmd_cred(args) -> int:
     raise GtcError("unknown cred subcommand")
 
 
-def cmd_ip(args) -> int:
-    target = getattr(args, "target", "") or ""
-    data = check_ip_info(target)
-    print("\n================ HASIL CEK IP ================")
-    for k, v in data.items():
-        print(f"  {k:<12}: {v}")
-    print("==============================================\n")
-    return 0
-
-
-def cmd_credits(args) -> int:
-    print("\n========================================")
-    print("          CREDITS PEMBUAT              ")
-    print("========================================")
-    print("  - rendisec")
-    print("  - vynngrup")
-    print("  - putrawibu")
-    print("  - xynnHd")
-    print("  - xynaa")
-    print("========================================\n")
-    return 0
-
-
 #  cli
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="gtc", description="GetContact CLI")
@@ -581,13 +559,6 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--description")
     g.set_defaults(func=cmd_generate)
 
-    ip_p = sub.add_parser("ip", help="track IP or domain information via TLS")
-    ip_p.add_argument("target", nargs="?", default="", help="IP address or domain name")
-    ip_p.set_defaults(func=cmd_ip)
-
-    cr_cmd = sub.add_parser("credits", help="show creator credits")
-    cr_cmd.set_defaults(func=cmd_credits)
-
     cr = sub.add_parser("cred", help="manage stored credentials")
     crs = cr.add_subparsers(dest="cred_cmd", required=True)
     crs.add_parser("list").set_defaults(func=cmd_cred)
@@ -615,7 +586,7 @@ BANNER = r"""
 ██║   ██║██╔══╝     ██║   ██║     ██║   ██║██║╚██╗██║   ██║   ██╔══██║██║        ██║   
 ╚██████╔╝███████╗   ██║   ╚██████╗╚██████╔╝██║ ╚████║   ██║   ██║  ██║╚██████╗   ██║   
  ╚═════╝ ╚══════╝   ╚═╝    ╚═════╝ ╚═════╝ ╚═╝  ╚═══╝   ╚═╝   ╚═╝  ╚═╝ ╚═════╝   ╚═╝                                                                            
-By RendiSec 
+By mfajarb 
 """
 
 
@@ -629,18 +600,44 @@ def print_startup(args) -> None:
     print(f"{d}  version   {APP_VERSION} | app {BUNDLE_ID}{r}", file=sys.stderr)
     print(f"{d}  config    {CONFIG_DIR}{r}", file=sys.stderr)
     print(f"{d}  account   {getattr(args, 'account', None) or active} ({n} stored){r}", file=sys.stderr)
-    print(f"{d}  command   {getattr(args, 'cmd', '-')}{r}\n", file=sys.stderr)
+    print(f"{d}  command   {args.cmd}{r}\n", file=sys.stderr)
+
+
+class _Tee:
+    def __init__(self, stream, fh):
+        self._s, self._f = stream, fh
+
+    def write(self, s):
+        self._s.write(s)
+        self._f.write(s)
+        return len(s)
+
+    def flush(self):
+        self._s.flush()
+        self._f.flush()
+
+    def __getattr__(self, name):
+        return getattr(self._s, name)
+
+
+def open_result_file(args) -> Path:
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    parts = [time.strftime("%Y%m%d-%H%M%S"), args.cmd]
+    for extra in (getattr(args, "phone", None), getattr(args, "action", None)):
+        if extra:
+            parts.append(re.sub(r"[^0-9A-Za-z_.-]", "_", str(extra)))
+    ext = "json" if getattr(args, "json", False) else "txt"
+    return RESULTS_DIR / f"{'-'.join(parts)}.{ext}"
 
 
 MENU = [
     ("Cari profil nomor        (nama pemilik)", "profile"),
-    ("Cari tag nomor (detail)  (nama tersimpan orang lain)", "tags"),
+    ("Cari tag nomor           (nama tersimpan orang lain)", "tags"),
     ("Sisa kuota akun", "quota"),
     ("Cari banyak nomor dari file CSV", "batch"),
     ("Buka blokir / captcha", "captcha"),
     ("Lihat akun tersimpan", "credlist"),
     ("Tambah akun baru (butuh WhatsApp)", "generate"),
-    ("Cek IP / Domain Info     (HTTPS / TLS)", "check_ip"),
     ("Credits Pembuat", "credits"),
 ]
 
@@ -672,26 +669,6 @@ def interactive() -> int:
             continue
 
         action = MENU[idx][1]
-        
-        if action == "credits":
-            cmd_credits(None)
-            input("Tekan Enter untuk kembali ke menu...")
-            continue
-            
-        if action == "check_ip":
-            target_ip = ask("Masukkan IP atau Domain (biarkan kosong untuk IP Anda sendiri): ")
-            try:
-                print("\nMengambil data dari ip-api.com (TLS)...")
-                data = check_ip_info(target_ip)
-                print("\n================ HASIL CEK IP ================")
-                for k, v in data.items():
-                    print(f"  {k:<12}: {v}")
-                print("==============================================\n")
-            except GtcError as e:
-                print(f"Error: {e}\n")
-            input("Tekan Enter untuk kembali ke menu...")
-            continue
-
         try:
             if action == "profile":
                 phone = ask("Nomor telepon: ")
