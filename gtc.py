@@ -180,7 +180,7 @@ def get_cred(store: dict, name: str | None) -> tuple[str, dict]:
     name = name or store.get("active")
     creds = store.get("credentials", {})
     if not name or name not in creds:
-        raise GtcError("No active credential. Run: gtc cred list / gtc cred use <name>")
+        raise GtcError("Tidak ada akun aktif. Tambahkan/pilih akun terlebih dahulu melalui menu 'Lihat/ganti akun tersimpan' atau 'Tambah akun baru'.")
     return name, creds[name]
 
 
@@ -195,7 +195,7 @@ def normalize_phone(raw: str) -> str:
     raise GtcError(f"Invalid phone number: {raw}")
 
 
-#  features
+#  features logic
 def api_search(cred: dict, phone: str, source: str) -> dict:
     endpoint = "/v2.8/number-detail" if source == "tags" else "/v2.8/search"
     payload = {
@@ -226,7 +226,7 @@ def show_captcha(b64_image: str) -> Path:
     path.write_bytes(base64.b64decode(b64_image))
     try:
         if sys.platform == "win32":
-            os.startfile(path)  # noqa: S606
+            os.startfile(path)
         elif sys.platform == "darwin":
             subprocess.Popen(["open", str(path)])
         else:
@@ -236,16 +236,16 @@ def show_captcha(b64_image: str) -> Path:
     return path
 
 
-#  commands
-def cmd_search(args) -> int:
+#  Direct Menu Functions
+def menu_search(source_type: str):
     store = load_store()
-    name, cred = get_cred(store, args.account)
-    phone = normalize_phone(args.phone)
-    body = api_search(cred, phone, args.type)
-    if args.json:
-        print(json.dumps(body, indent=2, ensure_ascii=False))
-        return 0
-    print(f"[{name}] {phone}")
+    _, cred = get_cred(store, None)
+    raw_phone = input("Masukkan nomor telepon: ").strip()
+    phone = normalize_phone(raw_phone)
+    print(f"\nMencari {phone}...")
+    body = api_search(cred, phone, source_type)
+    
+    print("\n--- HASIL PENCARIAN ---")
     profile = dig(body, "result.profile")
     if profile:
         for k in ("displayName", "name", "surname", "phoneNumber", "displayNumber", "tagCount", "email"):
@@ -257,73 +257,75 @@ def cmd_search(args) -> int:
             print(f"    - {t.get('tag')}  x{t.get('count', '')}")
     if not profile and not tags:
         print(json.dumps(body, indent=2, ensure_ascii=False))
-    return 0
+    print("-----------------------")
 
 
-def cmd_batch(args) -> int:
+def menu_quota():
     store = load_store()
-    name, cred = get_cred(store, args.account)
-    with open(args.csv, newline="", encoding="utf-8-sig") as fh:
+    name, cred = get_cred(store, None)
+    body = api_subscription(cred)
+    u = dig(body, "result.subscriptionInfo.usage") or {}
+    print(f"\n--- KUOTA AKUN [{name}] ---")
+    for key in ("search", "numberDetail"):
+        d = u.get(key) or {}
+        print(f"  {key:<13}: {d.get('remainingCount', '?')}/{d.get('limit', '?')} remaining")
+    print(f"  renewDate    : {dig(body, 'result.subscriptionInfo.renewDate', '-')}")
+    print("--------------------------")
+
+
+def menu_batch():
+    store = load_store()
+    _, cred = get_cred(store, None)
+    csv_path = input("Masukkan path file CSV: ").strip()
+    if not os.path.exists(csv_path):
+        print("File CSV tidak ditemukan!")
+        return
+    
+    with open(csv_path, newline="", encoding="utf-8-sig") as fh:
         rows = list(csv.reader(fh))
     if not rows:
-        raise GtcError("Empty CSV")
+        print("File CSV kosong!")
+        return
+        
     header = rows[0]
     col = 0
     if any(h.strip().lower() in ("phone", "phone_number", "phonenumber", "nomor") for h in header):
         col = next(i for i, h in enumerate(header)
                    if h.strip().lower() in ("phone", "phone_number", "phonenumber", "nomor"))
         rows = rows[1:]
-    out = csv.writer(sys.stdout if args.out == "-" else open(args.out, "w", newline="", encoding="utf-8"))
-    out.writerow(["phone", "status", "displayName", "tagCount", "tags", "error"])
+        
+    print("\nMemulai pencarian batch...")
     for row in rows:
         if not row or not row[col].strip():
             continue
         raw = row[col].strip()
         try:
             phone = normalize_phone(raw)
-            body = api_search(cred, phone, args.type)
+            body = api_search(cred, phone, "tags")
             prof = dig(body, "result.profile") or {}
             tags = [t.get("tag", "") for t in (dig(body, "result.tags") or [])]
-            out.writerow([phone, "ok", prof.get("displayName", ""),
-                          prof.get("tagCount", len(tags)), "|".join(tags), ""])
-            print(f"ok   {phone}", file=sys.stderr)
+            print(f"[OK] {phone} -> {prof.get('displayName', 'Tanpa Nama')} | Tags: {len(tags)}")
         except Exception as e:
-            out.writerow([raw, "error", "", "", "", str(e)])
-            print(f"FAIL {raw}: {e}", file=sys.stderr)
-        time.sleep(args.delay)
-    return 0
+            print(f"[FAIL] {raw}: {e}")
+        time.sleep(1.5)
+    print("Batch selesai.")
 
 
-def cmd_quota(args) -> int:
+def menu_captcha():
     store = load_store()
-    name, cred = get_cred(store, args.account)
-    body = api_subscription(cred)
-    if args.json:
-        print(json.dumps(body, indent=2, ensure_ascii=False))
-        return 0
-    u = dig(body, "result.subscriptionInfo.usage") or {}
-    print(f"[{name}]")
-    for key in ("search", "numberDetail"):
-        d = u.get(key) or {}
-        print(f"  {key:<13}: {d.get('remainingCount', '?')}/{d.get('limit', '?')} remaining")
-    print(f"  renewDate    : {dig(body, 'result.subscriptionInfo.renewDate', '-')}")
-    return 0
-
-
-def cmd_captcha(args) -> int:
-    store = load_store()
-    name, cred = get_cred(store, args.account)
+    _, cred = get_cred(store, None)
     common = dict(token=cred["token"], final_key=cred["finalKey"], device_id=cred["clientDeviceId"])
     code, body = gtc_call("/v2.8/refresh-code", {"token": cred["token"]}, **common)
     image = dig(body, "result.image")
     if not image:
-        raise GtcError(f"No captcha returned (HTTP {code}). Account may not be blocked.")
+        print(f"Tidak ada captcha (HTTP {code}). Akun mungkin tidak terblokir.")
+        return
     while True:
         path = show_captcha(image)
-        print(f"Captcha image: {path}")
-        answer = input("Enter captcha code (blank = refresh, 'q' = quit): ").strip()
+        print(f"Gambar captcha disimpan di: {path}")
+        answer = input("Masukkan kode captcha (kosong = refresh, 'q' = kembali): ").strip()
         if answer.lower() == "q":
-            return 1
+            break
         if not answer:
             _, body = gtc_call("/v2.8/refresh-code", {"token": cred["token"]}, **common)
             image = dig(body, "result.image") or image
@@ -331,19 +333,41 @@ def cmd_captcha(args) -> int:
         code, body = gtc_call("/v2.8/verify-code",
                               {"validationCode": answer, "token": cred["token"]}, **common)
         if code == 200 and dig(body, "meta.httpStatusCode") == 200:
-            print("Captcha verified.")
-            return 0
-        print("Wrong code, new captcha issued.")
+            print("Captcha berhasil diverifikasi!")
+            break
+        print("Kode salah, captcha baru dibuat.")
         image = dig(body, "result.image") or image
 
 
-def cmd_generate(args) -> int:
-    raw_phone = args.phone.strip()
+def menu_cred_list():
+    store = load_store()
+    creds = store.get("credentials", {})
+    if not creds:
+        print("\nBelum ada akun tersimpan.")
+        return
+    print("\n--- DAFTAR AKUN TERSIMPAN ---")
+    for name, c in creds.items():
+        mark = "*" if name == store.get("active") else " "
+        print(f"{mark} {name:<20} | {c.get('phoneNumber', '-'):<15} | {c.get('description', '')}")
+    print("-----------------------------")
+    
+    sub_opt = input("\nKetik nama akun untuk dijadikan aktif (atau kosongkan untuk kembali): ").strip()
+    if sub_opt:
+        if sub_opt in creds:
+            store["active"] = sub_opt
+            save_store(store)
+            print(f"Akun aktif berhasil diubah ke: {sub_opt}")
+        else:
+            print("Nama akun tidak ditemukan!")
+
+
+def menu_generate():
+    raw_phone = input("Masukkan nomor WhatsApp untuk verifikasi (misal 08xxxxxxxx): ").strip()
     phone = normalize_phone(raw_phone)
     device_id = new_device_id()
     priv, pub = dh_keypair()
 
-    # 1. register -> token + server public key
+    print("Mendaftarkan perangkat...")
     ts = _ts()
     reg_body = {
         "carrierCountryCode": CARRIER[0], "carrierName": CARRIER[1],
@@ -360,16 +384,15 @@ def cmd_generate(args) -> int:
         "x-req-signature": _sig(ts, raw, HMAC_KEY),
     })
     if r.status_code != 201:
-        raise GtcError(f"register failed: HTTP {r.status_code} {r.text[:200]}")
+        print(f"Gagal register: HTTP {r.status_code} {r.text[:200]}")
+        return
     reg = r.json()
     token = dig(reg, "result.token")
     server_key = dig(reg, "result.serverKey")
     if not token or not server_key:
-        raise GtcError(f"register: missing token/serverKey: {reg}")
+        print("Register gagal: token/serverKey tidak ada")
+        return
     final_key = dh_final_key(priv, server_key)
-    print(f"clientDeviceId : {device_id}")
-    print(f"finalKey       : {final_key}")
-    print(f"token          : {token}")
 
     common = dict(token=token, final_key=final_key, device_id=device_id)
     base = {
@@ -392,194 +415,63 @@ def cmd_generate(args) -> int:
     for endpoint, payload, want in steps:
         code, body = gtc_call(endpoint, payload, **common)
         if code != want:
-            raise GtcError(f"{endpoint} failed: HTTP {code}")
-        print(f"  ok {endpoint}")
+            print(f"Inisialisasi gagal di {endpoint} (HTTP {code})")
+            return
 
-    # ---------- VerifyKit (fixed) ----------
-    # 1. INIT
-    code, body = vfk_call("/v2.0/init", {
-        "isCallPermissionGranted": True,
-        "countryCode": "ID",
-        "deviceName": DEVICE_NAME,
+    # VerifyKit
+    vfk_call("/v2.0/init", {
+        "isCallPermissionGranted": True, "countryCode": "ID", "deviceName": DEVICE_NAME,
         "installedApps": '{"whatsapp":0,"telegram":0,"viber":0}',
-        "outsideCountryCode": "ID",
-        "outsidePhoneNumber": raw_phone,  
-        "timezone": TIME_ZONE,
-        "bundleId": BUNDLE_ID,
+        "outsideCountryCode": "ID", "outsidePhoneNumber": raw_phone,
+        "timezone": TIME_ZONE, "bundleId": BUNDLE_ID,
     }, device_id)
-    if code != 200:
-        raise GtcError(f"vfk init failed: HTTP {code} — {dig(body, 'message') or dig(body, 'error') or body}")
 
-    # 2. COUNTRY
-    code, body = vfk_call("/v2.0/country", {
-        "countryCode": "ID",
-        "bundleId": BUNDLE_ID,
-    }, device_id)
-    if code != 200:
-        raise GtcError(f"vfk country failed: HTTP {code}")
+    vfk_call("/v2.0/country", {"countryCode": "ID", "bundleId": BUNDLE_ID}, device_id)
 
-    # 3. START → WhatsApp deeplink
     code, body = vfk_call("/v2.0/start", {
-        "countryCode": "ID",
-        "mcc": CARRIER[0],
-        "mnc": CARRIER[2],
-        "phoneNumber": phone,  # E.164
-        "app": "whatsapp",
-        "bundleId": BUNDLE_ID,
+        "countryCode": "ID", "mcc": CARRIER[0], "mnc": CARRIER[2],
+        "phoneNumber": phone, "app": "whatsapp", "bundleId": BUNDLE_ID,
     }, device_id)
+    
     deeplink = dig(body, "result.deeplink")
     reference = dig(body, "result.reference")
     if not deeplink or not reference:
-        raise GtcError(f"vfk start failed (HTTP {code}): {body}")
-
-    codes = re.findall(r"\*(.*?)\*", urllib.parse.unquote(deeplink))
-    verification = next((c for c in codes if re.fullmatch(r"[A-Za-z0-9]+(?:-[A-Za-z0-9]+)+", c)), None)
+        print("Gagal mendapatkan link verifikasi WhatsApp.")
+        return
 
     gtc_call("/v2.8/validation-start",
              {"app": "verifykit", "countryCode": COUNTRY, "notificationToken": "", "token": token},
              **common)
 
-    print("\nSend the WhatsApp verification message, then come back:")
-    print(f"  link : {deeplink}")
-    print(f"  code : {verification}")
-    input("\nPress Enter after WhatsApp shows two checkmarks... ")
+    print("\n[!] Kirim pesan verifikasi WhatsApp melalui link berikut:")
+    print(f"  Link : {deeplink}")
+    input("\nTekan Enter jika pesan WhatsApp sudah terkirim dan bercentang... ")
 
-    # 4. CHECK → sessionId → gtc verifykit-result
-    code, body = vfk_call("/v2.0/check", {
-        "reference": reference,
-        "bundleId": BUNDLE_ID,
-    }, device_id)
+    code, body = vfk_call("/v2.0/check", {"reference": reference, "bundleId": BUNDLE_ID}, device_id)
     session_id = dig(body, "result.sessionId")
     if not session_id:
-        raise GtcError(f"Verification not completed yet (HTTP {code}): {body}")
+        print("Verifikasi belum selesai / gagal.")
+        return
 
-    code, body = gtc_call("/v2.8/verifykit-result",
-                          {"sessionId": session_id, "token": token}, **common)
+    code, body = gtc_call("/v2.8/verifykit-result", {"sessionId": session_id, "token": token}, **common)
     validation_date = dig(body, "result.validationDate")
     if not validation_date:
-        raise GtcError(f"verifykit-result failed (HTTP {code}): {body}")
+        print("Gagal mengambil hasil verifykit.")
+        return
 
     store = load_store()
-    name = args.name or phone
+    name = phone
     store.setdefault("credentials", {})[name] = {
-        "description": args.description or f"Generated {validation_date}",
+        "description": f"Generated {validation_date}",
         "phoneNumber": phone,
         "clientDeviceId": device_id,
         "finalKey": final_key,
         "token": token,
         "validationDate": validation_date,
     }
-    store["active"] = store.get("active") or name
+    store["active"] = name
     save_store(store)
-    print(f"\nVerified {validation_date}. Saved as '{name}' in {CRED_FILE}")
-    return 0
-
-def cmd_credits(args) -> int:
-    print("\n========================================")
-    print("          CREDITS PEMBUAT              ")
-    print("========================================")
-    print("  - rendisec")
-    print("  - vynngrup")
-    print("  - putrawibu")
-    print("  - xynnHd")
-    print("  - xynaa")
-    print("========================================\n")
-    return 0
-    
-def cmd_cred(args) -> int:
-    store = load_store()
-    creds = store.setdefault("credentials", {})
-    if args.cred_cmd == "list":
-        if not creds:
-            print(f"No credentials. Add one: gtc cred add <name> --final-key ... --token ...")
-            return 0
-        for name, c in creds.items():
-            mark = "*" if name == store.get("active") else " "
-            print(f"{mark} {name:<20} {c.get('phoneNumber', '-'):<16} {c.get('description', '')}")
-        return 0
-    if args.cred_cmd == "add":
-        creds[args.name] = {
-            "description": args.description or "",
-            "phoneNumber": args.phone or "",
-            "clientDeviceId": args.device_id or new_device_id(),
-            "finalKey": args.final_key,
-            "token": args.token,
-        }
-        store["active"] = store.get("active") or args.name
-        save_store(store)
-        print(f"Saved '{args.name}' to {CRED_FILE}")
-        return 0
-    if args.cred_cmd == "use":
-        if args.name not in creds:
-            raise GtcError(f"Unknown credential: {args.name}")
-        store["active"] = args.name
-        save_store(store)
-        print(f"Active credential: {args.name}")
-        return 0
-    if args.cred_cmd == "remove":
-        if creds.pop(args.name, None) is None:
-            raise GtcError(f"Unknown credential: {args.name}")
-        if store.get("active") == args.name:
-            store["active"] = next(iter(creds), None)
-        save_store(store)
-        print(f"Removed '{args.name}'")
-        return 0
-    raise GtcError("unknown cred subcommand")
-
-
-#  cli
-def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="gtc", description="GetContact CLI")
-    p.add_argument("-a", "--account", help="credential name (default: active)")
-    sub = p.add_subparsers(dest="cmd", required=True)
-
-    s = sub.add_parser("search", help="look up a phone number")
-    s.add_argument("phone")
-    s.add_argument("-t", "--type", choices=["profile", "tags"], default="profile")
-    s.add_argument("--json", action="store_true")
-    s.set_defaults(func=cmd_search)
-
-    b = sub.add_parser("batch", help="look up every number in a CSV")
-    b.add_argument("csv")
-    b.add_argument("-t", "--type", choices=["profile", "tags"], default="tags")
-    b.add_argument("-o", "--out", default="-", help="output CSV path (default stdout)")
-    b.add_argument("--delay", type=float, default=1.5, help="seconds between requests")
-    b.set_defaults(func=cmd_batch)
-
-    q = sub.add_parser("quota", help="show subscription usage")
-    q.add_argument("--json", action="store_true")
-    q.set_defaults(func=cmd_quota)
-
-    c = sub.add_parser("captcha", help="solve the captcha interactively (403 unblock)")
-    c.set_defaults(func=cmd_captcha)
-
-    g = sub.add_parser("generate", help="generate a new credential via DH + WhatsApp")
-    g.add_argument("phone")
-    g.add_argument("--name", help="store under this name (default: phone)")
-    g.add_argument("--description")
-    g.set_defaults(func=cmd_generate)
-
-    cr_cmd = sub.add_parser("credits", help="show creator credits")
-    cr_cmd.set_defaults(func=cmd_credits)
-
-    cr = sub.add_parser("cred", help="manage stored credentials")
-    crs = cr.add_subparsers(dest="cred_cmd", required=True)
-    crs.add_parser("list").set_defaults(func=cmd_cred)
-    a = crs.add_parser("add")
-    a.add_argument("name")
-    a.add_argument("--final-key", required=True)
-    a.add_argument("--token", required=True)
-    a.add_argument("--device-id")
-    a.add_argument("--phone")
-    a.add_argument("--description")
-    a.set_defaults(func=cmd_cred)
-    u = crs.add_parser("use")
-    u.add_argument("name")
-    u.set_defaults(func=cmd_cred)
-    rm = crs.add_parser("remove")
-    rm.add_argument("name")
-    rm.set_defaults(func=cmd_cred)
-    return p
+    print(f"\nBerhasil! Akun tersimpan dengan nama '{name}'.")
 
 
 BANNER = r"""
@@ -589,49 +481,8 @@ BANNER = r"""
 ██║   ██║██╔══╝     ██║   ██║     ██║   ██║██║╚██╗██║   ██║   ██╔══██║██║        ██║   
 ╚██████╔╝███████╗   ██║   ╚██████╗╚██████╔╝██║ ╚████║   ██║   ██║  ██║╚██████╗   ██║   
  ╚═════╝ ╚══════╝   ╚═╝    ╚═════╝ ╚═════╝ ╚═╝  ╚═══╝   ╚═╝   ╚═╝  ╚═╝ ╚═════╝   ╚═╝                                                                            
-By mfajarb 
+Credits By RendiSec 
 """
-
-
-def print_startup(args) -> None:
-    tty = sys.stderr.isatty()
-    c, d, r = ("\033[36m", "\033[2m", "\033[0m") if tty else ("", "", "")
-    print(f"{c}{BANNER}{r}", file=sys.stderr)
-    store = load_store() if CRED_FILE.exists() else {}
-    active = store.get("active") or "-"
-    n = len(store.get("credentials", {}))
-    print(f"{d}  version   {APP_VERSION} | app {BUNDLE_ID}{r}", file=sys.stderr)
-    print(f"{d}  config    {CONFIG_DIR}{r}", file=sys.stderr)
-    print(f"{d}  account   {getattr(args, 'account', None) or active} ({n} stored){r}", file=sys.stderr)
-    print(f"{d}  command   {args.cmd}{r}\n", file=sys.stderr)
-
-
-class _Tee:
-    def __init__(self, stream, fh):
-        self._s, self._f = stream, fh
-
-    def write(self, s):
-        self._s.write(s)
-        self._f.write(s)
-        return len(s)
-
-    def flush(self):
-        self._s.flush()
-        self._f.flush()
-
-    def __getattr__(self, name):
-        return getattr(self._s, name)
-
-
-def open_result_file(args) -> Path:
-    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    parts = [time.strftime("%Y%m%d-%H%M%S"), args.cmd]
-    for extra in (getattr(args, "phone", None), getattr(args, "action", None)):
-        if extra:
-            parts.append(re.sub(r"[^0-9A-Za-z_.-]", "_", str(extra)))
-    ext = "json" if getattr(args, "json", False) else "txt"
-    return RESULTS_DIR / f"{'-'.join(parts)}.{ext}"
-
 
 MENU = [
     ("Cari profil nomor        (nama pemilik)", "profile"),
@@ -639,9 +490,9 @@ MENU = [
     ("Sisa kuota akun", "quota"),
     ("Cari banyak nomor dari file CSV", "batch"),
     ("Buka blokir / captcha", "captcha"),
-    ("Lihat akun tersimpan", "credlist"),
+    ("Lihat/ganti akun tersimpan", "credlist"),
     ("Tambah akun baru (butuh WhatsApp)", "generate"),
-    ("Credits Pembuat", "credits"),
+    ("Credits Pembuat Tools", "credits"),
 ]
 
 
@@ -653,14 +504,19 @@ def ask(prompt: str) -> str:
 
 
 def interactive() -> int:
-    print(BANNER)
     while True:
+        print(BANNER)
+        store = load_store() if CRED_FILE.exists() else {}
+        active = store.get("active") or "Belum ada"
+        print(f"Status Akun Aktif: {active}\n")
         print("Pilih fitur:")
         for i, (label, _) in enumerate(MENU, 1):
             print(f"  {i}. {label}")
         print("  0. Keluar\n")
+        
         choice = ask("Nomor pilihan: ")
         if choice in ("0", "q", "keluar", ""):
+            print("Keluar...")
             return 0
         try:
             idx = int(choice) - 1
@@ -672,52 +528,47 @@ def interactive() -> int:
             continue
 
         action = MENU[idx][1]
-        try: 
-          if action == "credits":
-            cmd_credits(None)
-            input("Tekan Enter untuk kembali ke menu...")
-            continue
-            if action == "profile":
-                phone = ask("Nomor telepon: ")
-                sys.argv = ["gtc", "search", phone, "-t", "profile"]
+        try:
+            if action == "credits":
+                print("\n" + "=" * 40)
+                print("         CREDITS PEMBUAT TOOLS")
+                print("=" * 40)
+                print("  • RendiSec")
+                print("  • VynnGrup")
+                print("  • PutraWibu")
+                print("  • GeminiAi")
+                print("  • XynnHd")
+                print("  • Xynaa")
+                print("=" * 40)
+            elif action == "profile":
+                menu_search("profile")
             elif action == "tags":
-                phone = ask("Nomor telepon: ")
-                sys.argv = ["gtc", "search", phone, "-t", "tags"]
+                menu_search("tags")
             elif action == "quota":
-                sys.argv = ["gtc", "quota"]
+                menu_quota()
             elif action == "batch":
-                csv_path = ask("Path file CSV: ")
-                sys.argv = ["gtc", "batch", csv_path]
+                menu_batch()
             elif action == "captcha":
-                sys.argv = ["gtc", "captcha"]
+                menu_captcha()
             elif action == "credlist":
-                sys.argv = ["gtc", "cred", "list"]
+                menu_cred_list()
             elif action == "generate":
-                phone = ask("Nomor WhatsApp (untuk verifikasi): ")
-                sys.argv = ["gtc", "generate", phone]
-            else:
-                continue
-
-            args = build_parser().parse_args()
-            print_startup(args)
-            return args.func(args)
+                menu_generate()
+                
+            input("\nTekan Enter untuk kembali ke menu... ")
+            print("\n" * 2)
         except GtcError as e:
-            print(f"Error: {e}\n")
+            print(f"\n[Error] {e}")
+            input("\nTekan Enter untuk kembali ke menu... ")
+            print("\n" * 2)
         except Exception as e:
-            print(f"Unexpected error: {e}\n")
+            print(f"\n[Unexpected Error] {e}")
+            input("\nTekan Enter untuk kembali ke menu... ")
+            print("\n" * 2)
 
 
 def main() -> int:
-    if len(sys.argv) == 1:
-        return interactive()
-    parser = build_parser()
-    args = parser.parse_args()
-    print_startup(args)
-    try:
-        return args.func(args)
-    except GtcError as e:
-        print(f"Error: {e}", file=sys.stderr)
-        return 1
+    return interactive()
 
 
 if __name__ == "__main__":
